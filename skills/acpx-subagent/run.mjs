@@ -14,8 +14,11 @@ const windows = process.platform === "win32";
 const abort = new AbortController();
 const options = [];
 const flags = { interval: "15" };
+const timeScale = Number(process.env.ACPX_SUBAGENT_TIME_SCALE ?? "1");
+const waitLimit = 30 * 60 * 1000 * timeScale;
+const timeoutMessage = "Unfinished tool calls after 30 minutes waiting";
 const ending = 'Run builds and tests synchronously in the foreground. No background daemons or unsolicited plan/artifact files. Return "## Summary" first: concise bullets for changed files, verification, decisions, and unresolved issues. Follow with "## Detailed Notes".';
-const followup = 'Wait for the running command to finish, then give the final report with "## Summary" first.';
+const followup = 'The command is still running. Keep checking its status and do not reply until it has finished, then give the final report with "## Summary" first.';
 const tools = new Map();
 let held = false;
 let child;
@@ -27,6 +30,7 @@ let output;
 let session;
 let created = false;
 let reply = "";
+let deadline;
 
 function alive(pid) {
   try { process.kill(pid, 0); return true; }
@@ -45,9 +49,14 @@ function activity(text) {
   process.stdout.write(`${text}\n`);
 }
 
+function unfinished() {
+  return [...tools.values()].some((tool) => !["completed", "failed"].includes(tool.status));
+}
+
 function event(message, turn) {
   if (log !== undefined) appendFileSync(log, `${JSON.stringify(message)}\n`);
   const update = message.params?.update;
+  if (update?.sessionUpdate === "user_message_chunk") reply = "";
   if (update?.sessionUpdate === "agent_message_chunk" && update.content?.type === "text")
     reply += update.content.text;
   if (update?.sessionUpdate === "agent_thought_chunk" && update.content?.text)
@@ -66,11 +75,14 @@ function event(message, turn) {
   if (message.result?.stopReason) {
     turn.stopped = true;
     activity(`Stop: ${message.result.stopReason}`);
-    if (message.result.usage) activity(`Usage: ${JSON.stringify(message.result.usage)}`);
+    if (message.result.usage) {
+      const usage = message.result.usage;
+      activity(`Usage: ${usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)} tokens`);
+    }
   }
 }
 
-async function run(args, turn = {}) {
+async function run(args, turn = {}, expires) {
   if (interrupted) throw new Error("Interrupted");
   const argv = ["-y", "acpx@latest", "--format", "json"];
   if (flags.model !== undefined) argv.push("--model", flags.model);
@@ -80,6 +92,12 @@ async function run(args, turn = {}) {
   const command = ["npx", ...argv].map((value) => / |^$/.test(value) ? `"${value}"` : value).join(" ");
   child = windows ? spawn(command, { shell: true, stdio: ["ignore", "pipe", "inherit"] })
     : spawn("npx", argv, { stdio: ["ignore", "pipe", "inherit"] });
+  let expired = false;
+  const timer = expires === undefined ? undefined : globalThis.setTimeout(() => {
+    if (!unfinished()) return;
+    expired = true;
+    child?.kill("SIGTERM");
+  }, Math.max(0, expires - performance.now()));
   let parseError;
   const lines = createInterface({ input: child.stdout });
   lines.on("line", (line) => {
@@ -90,8 +108,9 @@ async function run(args, turn = {}) {
   const code = await new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("close", (code, signal) => resolve(code ?? (signal ? 128 + constants.signals[signal] : interrupted || 1)));
-  });
+  }).finally(() => clearTimeout(timer));
   child = undefined;
+  if (expired) throw new Error(timeoutMessage);
   if (code) throw Object.assign(new Error(`acpx exited with code ${code}`), { exitCode: code });
   if (parseError) throw parseError;
 }
@@ -116,6 +135,7 @@ try {
     } else flags[key] = value;
   }
   const seconds = Number(flags.interval);
+  if (!Number.isFinite(timeScale) || timeScale <= 0 || timeScale > 1) throw new Error("Invalid time scale");
   if (!flags.agent || !flags.prompt || !flags.output || !Number.isSafeInteger(seconds) || seconds < 1 || seconds > 86400)
     throw new Error("Require --agent, --prompt, --output and --interval 1..86400");
   const task = readFileSync(flags.prompt, "utf8");
@@ -149,15 +169,17 @@ try {
   for (let count = 0; ; count++) {
     reply = "";
     const turn = {};
-    await run(["-s", session, "--file", prompt], turn);
+    await run(["-s", session, "--file", prompt], turn, deadline);
     if (!turn.stopped) throw new Error("acpx ended without a stop reason");
-    if ([...tools.values()].every((tool) => ["completed", "failed"].includes(tool.status))) break;
-    if (count === 5) throw new Error("Unfinished tool calls after 5 follow-ups");
+    if (!unfinished()) break;
+    deadline ??= performance.now() + waitLimit;
+    const delay = Math.max(seconds, Math.min(15 * 2 ** Math.min(count, 3), 120)) * 1000 * timeScale;
+    await setTimeout(Math.max(0, Math.min(delay, deadline - performance.now())), undefined, { signal: abort.signal });
+    if (performance.now() >= deadline) throw new Error(timeoutMessage);
     const notice = `Follow-up: ${followup}`;
     activity(notice);
     if (log !== undefined) appendFileSync(log, `${notice}\n`);
-    await setTimeout(seconds * 1000, undefined, { signal: abort.signal });
-    writeFileSync(prompt, `${followup}\n\n${ending}\n`, { mode: 0o600 });
+    writeFileSync(prompt, `${followup}\n`, { mode: 0o600 });
   }
   if (!/^## Summary\s*$/m.test(reply))
     throw Object.assign(new Error('Final reply has no "## Summary" heading'), { exitCode: 2 });

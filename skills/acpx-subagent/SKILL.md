@@ -20,7 +20,7 @@ node "<skill-directory>/run.mjs" --agent <alias> --prompt "<task file>" --output
 - Stdout streams terse activity, never reply text or tool output bodies, and ends with the reply file path. Stderr contains diagnostics. Optional `--log` records complete events and thoughts; tell the user its path so they can watch it with `tail -f` or their OS equivalent.
 - Use a long or disabled tool timeout; calls can take many minutes. On non-zero exit or timeout, stop and report the exit status and file paths. Do not retry, switch agents, or delete the lock.
 - Add `--model <exact-id>` or repeat `--option <key>=<value>` only as requested; values pass through unchanged. Use `--session <name>` for persistent follow-ups with the same agent and cwd. Otherwise the wrapper creates and soft-closes a unique session; stored history remains.
-- The wrapper appends foreground-only build/test and report-format instructions, waits for unfinished tools using up to five follow-up turns, and requires a final `## Summary` heading. No background execution or approval-bypass flags.
+- The wrapper appends foreground-only build/test and report instructions. Unfinished tools trigger follow-ups after 15, 30, 60, then 120 seconds (never below `--interval`), with a 30-minute waiting limit. A final `## Summary` heading is required. No background execution or approval-bypass flags.
 - On Windows, argument values must contain only letters, digits, spaces, or `. : \ / @ = , + - _ ~`.
 
 ## Inspect
