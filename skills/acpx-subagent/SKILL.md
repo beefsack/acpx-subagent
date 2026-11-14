@@ -17,11 +17,11 @@ description: Delegate a bounded task to an external ACP agent through acpx. Use 
 Resolve the adjacent `gate.mjs` to an absolute path without changing cwd. Wrap every agent-contacting command, including session creation and `set`:
 
 ```sh
-node "<skill-directory>/gate.mjs" 60 -- npx -y acpx@latest --format quiet <agent> exec --file "<prompt path>" > "<output path>" 2>&1
+node "<skill-directory>/gate.mjs" 15 -- npx -y acpx@latest --format quiet <agent> exec --file "<prompt path>" > "<output path>" 2>&1
 ```
 
 - Calls may take many minutes: use a long tool timeout or disable it. A timed-out call may still be running; stop and inspect before further calls.
-- Always send prompt text through `--file`. Windows uses a shell for command shims: paths/arguments must contain no shell metacharacters (including quotes, `%`, `!`, `^`, `&`, `|`, `<`, `>`, parentheses); quote arguments containing spaces. Non-Windows launch uses no shell.
+- Always send prompt text through `--file`. On Windows the gate rejects arguments with shell metacharacters.
 - Keep the prefix, redirection, and wrapper for all commands. `exec` saves no session. For follow-ups, run `<agent> sessions ensure --name <name>`, check success, then replace `exec` with `-s <name>`. Keep the same agent, cwd, and name.
 - Add global `--model <exact-id>` only when requested. For effort, verify advertised option IDs/values: one-off `exec --config-option <key>=<value>`, or gated `<agent> set <key> <value> -s <name>`. Check the [CLI reference](https://github.com/openclaw/acpx/blob/main/docs/CLI.md) or current help when needed; never guess.
 - No `--no-wait`, background shell execution, automatic retries, or approval-bypass flags.
@@ -34,5 +34,5 @@ node "<skill-directory>/gate.mjs" 60 -- npx -y acpx@latest --format quiet <agent
 
 ## Gate
 
-- One OS-user gate covers all agents/repos, waits 60 seconds after release, runs foreground, and releases on exit or handled interruption. Increase the interval when needed; keep the same home directory. Live owners fail immediately; dead PIDs are reclaimed, never by age.
-- A PID-named file in `~/.acpx/acpx-subagent.lock` identifies its owner. Forced termination can leave children running; client exit does not prove remote completion. Stop and inspect uncertainty; never delete locks or retry blindly.
+- One OS-user gate covers all agents/repos, waits 15 seconds after release, and releases on exit or handled interruption. Keep the same home directory. Live owners fail immediately; dead PIDs are reclaimed, never by age.
+- `~/.acpx/acpx-subagent.lock` contains a PID-named owner file. Forced termination can leave children running; client exit does not prove remote completion. Never delete locks or retry blindly.

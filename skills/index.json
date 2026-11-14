@@ -2,7 +2,7 @@
   "skills": [
     {
       "name": "acpx-subagent",
-      "version": "1",
+      "version": "2",
       "files": ["SKILL.md", "gate.mjs"]
     }
   ]
